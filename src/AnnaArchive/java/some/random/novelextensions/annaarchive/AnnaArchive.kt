@@ -1,4 +1,4 @@
-package some.random.novelextensions.annaarchive
+package some.random.novelextensions.novelbuddy
 
 import ani.dantotsu.parsers.Book
 import ani.dantotsu.parsers.NovelInterface
@@ -10,66 +10,53 @@ import kotlinx.coroutines.launch
 import org.jsoup.Jsoup
 import org.jsoup.nodes.Element
 
-/* testing
-fun main(){
-    val anna = AnnaArchive()
-    val client = Requests()
-    //val search = anna.search("Alya Sometimes Hides Her feelings")
-    // launch a separate coroutine to perform the search
-    var book: Book? = null
-    CoroutineScope(Dispatchers.IO).launch {
-        //search = anna.search("Alya Sometimes Hides Her feelings", client)
-        book = anna.loadBook("https://annas-archive.org/md5/ad3abaa3b9bf331dd40ec523d6a2cce1", mapOf(), client)
-    }
-    // wait for the coroutine to finish
-    Thread.sleep(8000)
-    // print the results
-    book?.let{
-        println("search: $it")
-    }
-}*/
-
 @Suppress("unused")
-class AnnaArchive() : NovelInterface {
+class NovelBuddy : NovelInterface {
 
-    val name = "Anna's Archive"
-    val saveName = "anna"
-    val hostUrl = "https://annas-archive.org"
-    val volumeRegex = Regex("vol\\.? (\\d+(\\.\\d+)?)|volume (\\d+(\\.\\d+)?)", RegexOption.IGNORE_CASE)
+    val name = "NovelBuddy"
+    val saveName = "novelbuddy"
+    val hostUrl = "https://novelbuddy.com"
     val defaultImage = "https://s4.anilist.co/file/anilistcdn/media/manga/cover/medium/default.jpg"
 
-
-
     private fun parseShowResponse(it: Element?): ShowResponse? {
-        //logger("parseShowResponse called with element: ${it?.text()}")
         it ?: return null
-        if (!it.select("div[class~=lg:text-xs]").text().contains("epub", ignoreCase = true)) {
-            return null
-        }
-        //logger("parseShowResponse called with element: ${it.text()}")
-        val name = it.selectFirst("h3")?.text() ?: ""
-        var img = it.selectFirst("img")?.attr("src") ?: ""
-        if(img=="") img = defaultImage
+        val a = it.selectFirst("a") ?: return null
+        val title = a.attr("title").ifEmpty { a.text() }
+        val link = a.attr("href").let { href -> if (href.startsWith("http")) href else "$hostUrl$href" }
+        var img = it.selectFirst("img")?.attr("data-src") ?: it.selectFirst("img")?.attr("src") ?: defaultImage
+        val author = it.selectFirst(".author")?.text() ?: "Unknown"
         val extra = mapOf(
-            "0" to it.select("div.italic").text(),
-            "1" to it.select("div[class~=max-lg:text-xs]").text(),
-            "2" to it.select("div[class~=lg:text-xs]").text(),
+            "author" to author,
         )
-        return ShowResponse(name, "$hostUrl${it.attr("href")}", img, extra = extra)
+        return ShowResponse(title, link, img, extra = extra)
     }
 
     override suspend fun search(query: String, client: Requests): List<ShowResponse> {
-        val q = query.substringAfter("!$").replace("-", " ") // (minus) - does not display records containing the words after
-        val vols1 = client.get("$hostUrl/search?ext=epub&q=$q")
-            .document.getElementsByAttributeValueContaining("class", "h-[125]")
-        //logger("Novel search: $query, $q, ${vols1.size}")
-        val vols = vols1
-            .mapNotNull { div ->
-                val a = div.selectFirst("a") ?: Jsoup.parse(div.data())
-                parseShowResponse(a.selectFirst("a"))
-            }
-        //logger("Novel search: $query, $q, ${vols.size}")
-        return if(query.startsWith("!$")) vols.sortByVolume(q) else vols
+        val q = query.replace(" ", "+")
+        val response = client.get("$hostUrl/search?q=$q")
+        val document = response.document
+        val results = document.select("div.book-item")
+        return results.mapNotNull { div -> parseShowResponse(div) }
+    }
+
+    override suspend fun loadBook(link: String, extra: Map<String, String>?, client: Requests): Book {
+        val response = client.get(link)
+        val document = response.document
+        val title = document.selectFirst("h1")?.text() ?: "Untitled"
+        var img = document.selectFirst(".book-cover img")?.attr("src") ?: defaultImage
+        val description = document.selectFirst(".summary__content")?.text()
+        val chapterElements = document.select("ul.main li a")
+        val chapterLinks = chapterElements.mapNotNull { a ->
+            val href = a.attr("href")
+            if (href.startsWith("http")) href else "$hostUrl$href"
+        }
+        return Book(title, img, description, chapterLinks)
+    }
+}
+
+fun logger(msg: String) {
+    println(msg)
+}
     }
 
     override suspend fun loadBook(link: String, extra: Map<String, String>?, client: Requests): Book {
